@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "@shadow-js/web"
+  },
+  "include": ["src", "../src", "../types"]
+}
