@@ -49,10 +49,10 @@
     "@shadow-js/web": "^1.0.0",
     "@types/node": "^24.0.0",
     "happy-dom": "^21.0.3",
-    "rolldown": "1.2.13",
-    "tsdown": "0.23.0",
+    "rolldown": "1.2.14",
+    "tsdown": "0.23.1",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   },
   "keywords": [
     "shadowjs",
