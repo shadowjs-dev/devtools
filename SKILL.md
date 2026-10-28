@@ -5,7 +5,7 @@ description: "Work with @shadow-js/devtools. A development panel that shows the 
 
 # @shadow-js/devtools
 
-Version 1.0.0. A development panel that shows the components, signals, effects and updates of a running app.
+Version 1.0.1. A development panel that shows the components, signals, effects and updates of a running app.
 
 ## Where to read more
 
@@ -23,8 +23,8 @@ npm install -D @shadow-js/devtools @shadow-js/core @shadow-js/web
 
 | Package | Range | Required |
 | --- | --- | --- |
-| `@shadow-js/core` | `^1.0.0` | yes |
-| `@shadow-js/web` | `^1.0.0` | yes |
+| `@shadow-js/core` | `^1.0.1` | yes |
+| `@shadow-js/web` | `^1.0.1` | yes |
 
 ## Import paths
 
