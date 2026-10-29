@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.3
+
+### Fixed
+
+- `importState` applies `limits.maxNodes` (nodes past it are counted in `overflow`, as live ones are).
+- `isModelState` refuses a node, write or run whose `sources` or `observers` list holds more than 100,000 entries.
+
 ## 1.0.2
 
 ### Fixed

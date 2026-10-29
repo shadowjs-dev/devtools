@@ -789,7 +789,8 @@ export class InspectorModel {
   /**
    * Replaces the whole state with `state`. A remote panel does this with the agent's state, and the
    * agent does it with an empty state to implement `clear`. The capacities of this model do not change:
-   * when `state` holds more records than a buffer can keep, the newest are kept.
+   * when `state` holds more records than a buffer can keep, the newest are kept; nodes past
+   * `limits.maxNodes` are left out and counted in `overflow`, as nodes created live are.
    *
    * @param state The state to load.
    */
@@ -810,7 +811,13 @@ export class InspectorModel {
       observers: plain.observers.length === 0 ? null : new Set(plain.observers),
     });
     this.leaves.clear();
+    let dropped = 0;
     for (const plain of state.nodes) {
+      // The cap of the live path: the nodes that do not fit are counted, not kept.
+      if (this.nodes.size >= this.limits.maxNodes) {
+        dropped += 1;
+        continue;
+      }
       const record = revive(plain);
       this.nodes.set(plain.id, record);
       if (record.type === "signal" || record.type === "store" || record.type === "resource") {
@@ -829,7 +836,7 @@ export class InspectorModel {
     for (const error of state.errors) this.errors.push(error);
     for (const mismatch of state.hydration) this.hydration.push(mismatch);
     this.lastSeq = state.lastSeq;
-    this.overflow = state.overflow;
+    this.overflow = state.overflow + dropped;
     this.unknown = state.unknown;
     this.componentEpoch += 1;
   }

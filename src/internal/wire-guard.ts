@@ -21,8 +21,11 @@ function isOptionalText(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
 
+/** The most entries one `sources` or `observers` list may hold: a panel allocates what a page sends, so a list is bounded. */
+const MAX_EDGES = 100_000;
+
 function areNumbers(value: unknown): value is number[] {
-  if (!Array.isArray(value)) return false;
+  if (!Array.isArray(value) || value.length > MAX_EDGES) return false;
   for (let index = 0; index < value.length; index += 1) {
     if (!isNumber(value[index])) return false;
   }
