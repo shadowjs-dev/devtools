@@ -5,6 +5,7 @@
  *
  * @packageDocumentation
  */
+import { isWireEvent } from "../../../src/internal/wire-guard";
 import { PROTOCOL_VERSION, type WireEvent } from "../../../src/protocol";
 import { isAgentMessage, type Transport } from "../../../src/transport";
 
@@ -67,7 +68,9 @@ export function createEventTap(): EventTap {
             handler(raw);
             if (listeners.size === 0) return;
             if (!isAgentMessage(raw) || raw.type !== "events" || raw.v !== PROTOCOL_VERSION) return;
-            for (const listener of [...listeners]) listener(raw.events);
+            // The page is not trusted: the recorder reads only events that have the shape of an event.
+            const events = raw.events.filter(isWireEvent);
+            for (const listener of [...listeners]) listener(events);
           }),
       };
     },

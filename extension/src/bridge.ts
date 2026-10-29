@@ -1,5 +1,12 @@
 import { PROTOCOL_VERSION } from "../../src/protocol";
-import { CHANNEL, isAgentMessage, isPanelMessage, type Transport } from "../../src/transport";
+import {
+  type AgentMessage,
+  CHANNEL,
+  isAgentMessage,
+  isPanelMessage,
+  type PanelMessage,
+  type Transport,
+} from "../../src/transport";
 
 /**
  * The name the content script opens its port with. The background pairs it with the panel of the same
@@ -31,6 +38,19 @@ export const MAX_BATCH = 2000;
  * @since 1.0.0
  */
 export const MAX_MESSAGE_CHARS = 1_000_000;
+
+/**
+ * Longest `response` the bridge forwards, in characters of its JSON text. An answer is sent as one message
+ * up to this size: the complete state a panel asks for when it opens is far larger than a batch of events
+ * (a few thousand runs already pass {@link MAX_MESSAGE_CHARS}), and so is the text of a big store. The panel
+ * asks for each answer, so a larger cap here does not open a way to flood it. The agent sends an answer that
+ * is longer than this as `chunk` messages (see `AgentMessage`), each within {@link MAX_MESSAGE_CHARS}, and
+ * the panel joins them. A single `response` past the cap is not from a current agent: the bridge answers the
+ * request itself, with an error, so the panel does not wait forever.
+ *
+ * @since 1.0.0
+ */
+export const MAX_RESPONSE_CHARS = 16_000_000;
 
 /**
  * The `type` of the inspection ping: the page's agent tells the panel that an inspection source changed,
@@ -192,7 +212,8 @@ export interface PageBridge {
  * send the page anything but a panel message.
  *
  * When the port disconnects (the background was stopped by the browser), the bridge reconnects after
- * `retryDelayMs`, up to `maxRetries` times in a row without an answer.
+ * `retryDelayMs`, up to `maxRetries` times in a row without an answer. After each reconnect it asks the
+ * page's agent to say `hello`, so the panel learns the agent's instance id and notices a restarted agent.
  *
  * @param options The window, origin and port factory.
  * @returns The bridge handle.
@@ -220,6 +241,7 @@ export function createPageBridge(options: PageBridgeOptions): PageBridge {
   let port: RuntimePort | undefined;
   let stopped = false;
   let failures = 0;
+  let opened = 0;
 
   /** Takes a token for one message; false when the page has sent more than its rate allows. */
   const takeToken = (): boolean => {
@@ -232,9 +254,9 @@ export function createPageBridge(options: PageBridgeOptions): PageBridge {
   };
 
   /** True when the message's JSON text fits the limit. A message that cannot be serialized is not sent. */
-  const fitsSize = (message: unknown): boolean => {
+  const fitsSize = (message: unknown, limit: number): boolean => {
     try {
-      return JSON.stringify(message).length <= MAX_MESSAGE_CHARS;
+      return JSON.stringify(message).length <= limit;
     } catch {
       // A cycle or a value JSON cannot hold: the agent never sends one, so the message is refused.
       return false;
@@ -251,8 +273,21 @@ export function createPageBridge(options: PageBridgeOptions): PageBridge {
       return;
     }
     // Only a message that has the right shape costs a token, so spoofed messages cannot starve the agent.
-    if (!fitsSize(message)) {
+    const isResponse = isAgentMessage(message) && message.type === "response";
+    if (!fitsSize(message, isResponse ? MAX_RESPONSE_CHARS : MAX_MESSAGE_CHARS)) {
       dropped += 1;
+      // Dropped in silence, a refused answer would leave the panel's request pending for good.
+      if (isResponse && takeToken()) {
+        const refusal: AgentMessage = {
+          channel: CHANNEL,
+          v: message.v,
+          from: "agent",
+          type: "response",
+          id: message.id,
+          response: { ok: false, error: "The page's answer was too large to send to the panel." },
+        };
+        port.postMessage(refusal);
+      }
       return;
     }
     if (!takeToken()) {
@@ -291,6 +326,19 @@ export function createPageBridge(options: PageBridgeOptions): PageBridge {
     port = next;
     next.onMessage.addListener(toPage);
     next.onDisconnect.addListener(onDisconnect);
+    opened += 1;
+    if (opened > 1) {
+      // The port was reopened while the page kept running (or the page just reloaded behind a panel that
+      // stayed open). Nothing says what the panel last saw, so the agent is asked to introduce itself: its
+      // `hello` carries the agent's instance id, and a panel that holds another one asks for a new state.
+      const hello: PanelMessage = {
+        channel: CHANNEL,
+        v: PROTOCOL_VERSION,
+        from: "panel",
+        type: "hello",
+      };
+      options.page.postMessage(hello, options.origin);
+    }
   }
 
   options.page.addEventListener("message", fromPage);

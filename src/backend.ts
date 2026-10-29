@@ -13,6 +13,12 @@ export interface Backend {
   readonly model: InspectorModel;
   /** Resolves once the first complete state is available. */
   readonly ready: Promise<void>;
+  /**
+   * Why the first complete state could not be loaded, or `undefined`. A remote backend sets it when the
+   * agent refuses or cannot send its state (for example an answer over the bridge's size cap) and notifies
+   * its subscribers; `ready` then stays pending. It clears when a state arrives. A local backend never fails.
+   */
+  readonly error?: () => string | undefined;
   /** Calls `listener` after the model changed (batched). Returns the unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /** Sends a command to the agent. Resolves with its answer; rejects only when the backend is disposed. */

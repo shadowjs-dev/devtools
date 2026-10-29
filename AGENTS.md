@@ -43,7 +43,7 @@ npm run check   # lint, build, type check and every test
 - `build/`: the shared tsdown preset every package build uses.
 - `extension/`: the browser extension of the devtools.
 - `scripts/`: build and release scripts; `release.mjs` is run by the workflows.
-- `src/`: the source of the package; one folder per concern, `index.ts` re-exports the public API. Folders: `ui/`.
+- `src/`: the source of the package; one folder per concern, `index.ts` re-exports the public API. Folders: `internal/`, `ui/`.
 - `test/`: the tests; one file per behavior, each test named by an invariant id such as `[ROUTER-12]`.
 - `test-types/`: type-level tests: what the package promises to the compiler of its users.
 - `types/`: ambient declarations shared with the build.

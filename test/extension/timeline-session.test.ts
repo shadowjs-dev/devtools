@@ -87,12 +87,17 @@ describe("[DVT-TL-TP] the tap forwards the transport untouched and feeds listene
     const wrapped = tap.wrap(panelSide);
     const order: string[] = [];
     wrapped.listen(() => order.push("handler"));
-    pageSide.send(eventsMessage([{ k: "flush+" }]));
+    pageSide.send(eventsMessage([{ k: "flush+", seq: 1, t: 0, render: 0, user: 0 }]));
     expect(tap.listeners).toBe(0);
     expect(order).toEqual(["handler"]);
     const stop = tap.subscribe((batch) => order.push(`tap ${batch.length}`));
     expect(tap.listeners).toBe(1);
-    pageSide.send(eventsMessage([{ k: "flush+" }, { k: "flush-" }]));
+    pageSide.send(
+      eventsMessage([
+        { k: "flush+", seq: 2, t: 0, render: 0, user: 0 },
+        { k: "flush-", seq: 3, t: 0, runs: 0 },
+      ]),
+    );
     expect(order).toEqual(["handler", "handler", "tap 2"]);
     stop();
     expect(tap.listeners).toBe(0);

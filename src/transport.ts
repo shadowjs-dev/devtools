@@ -1,5 +1,6 @@
 import type { Agent, AgentRequest, AgentResponse } from "./agent";
 import type { Backend, PageHooks } from "./backend";
+import { isModelState, isWireEvent } from "./internal/wire-guard";
 import { InspectorModel, type ModelLimits, type ModelState } from "./model";
 import { PROTOCOL_VERSION, type WireEvent } from "./protocol";
 
@@ -20,11 +21,29 @@ export const CHANNEL = "shadowjs-devtools";
  * A message the agent side sends to the panel: the answer to a `hello`, a batch of events, or the
  * answer to a request. All fields are plain data.
  *
+ * Every message {@link serveAgent} sends carries `instance`, a random id of that served agent. A reloaded
+ * page starts a new agent with a new id, so a panel that sees the id change knows the state it holds is
+ * from a page that is gone, even when the new agent's sequence numbers happen to be higher than the old
+ * ones. The field is optional so that messages of an older agent still pass {@link isAgentMessage}.
+ *
+ * An answer whose JSON text is longer than {@link SINGLE_RESPONSE_CHARS} (the complete state of a very
+ * busy page) is not one `response` message: the agent sends it as `chunk` messages of at most
+ * {@link CHUNK_CHARS} characters each, and {@link connectRemote} joins them. Smaller answers keep the
+ * single `response` message, so an older panel keeps working with a newer agent for everything it could
+ * receive before.
+ *
  * @since 1.0.0
  */
 export type AgentMessage =
-  | { channel: typeof CHANNEL; v: number; from: "agent"; type: "hello" }
-  | { channel: typeof CHANNEL; v: number; from: "agent"; type: "events"; events: WireEvent[] }
+  | { channel: typeof CHANNEL; v: number; from: "agent"; type: "hello"; instance?: string }
+  | {
+      channel: typeof CHANNEL;
+      v: number;
+      from: "agent";
+      type: "events";
+      events: WireEvent[];
+      instance?: string;
+    }
   | {
       channel: typeof CHANNEL;
       v: number;
@@ -32,6 +51,24 @@ export type AgentMessage =
       type: "response";
       id: number;
       response: AgentResponse;
+      instance?: string;
+    }
+  | {
+      channel: typeof CHANNEL;
+      v: number;
+      from: "agent";
+      type: "chunk";
+      /** The id of the request the chunked answer belongs to. */
+      id: number;
+      /** The index of this piece, from 0. */
+      part: number;
+      /** How many pieces the answer has. */
+      parts: number;
+      /** The length of the whole JSON text, in characters: the panel checks the pieces add up to it. */
+      size: number;
+      /** This piece of the JSON text of the answer. */
+      data: string;
+      instance?: string;
     };
 
 /**
@@ -75,6 +112,65 @@ export interface Transport {
   close(): void;
 }
 
+/**
+ * Longest piece of a chunked answer, in characters of its JSON text. Twice this (every character escaped
+ * when the message is serialized again) plus the envelope still fits the extension bridge's message cap,
+ * so a chunk is never refused for its size.
+ *
+ * @example
+ * CHUNK_CHARS; // 400000
+ * @since 1.0.0
+ */
+export const CHUNK_CHARS = 400_000;
+
+/**
+ * Longest answer the agent still sends as one `response` message, in characters of its JSON text. It is
+ * just below the extension bridge's cap for an answer; anything longer is sent as chunks.
+ *
+ * @example
+ * SINGLE_RESPONSE_CHARS; // 15000000
+ * @since 1.0.0
+ */
+export const SINGLE_RESPONSE_CHARS = 15_000_000;
+
+/**
+ * Most pieces one chunked answer may have. A panel ignores a chunk that claims more.
+ *
+ * @example
+ * MAX_CHUNKS; // 1024
+ * @since 1.0.0
+ */
+export const MAX_CHUNKS = 1024;
+
+/**
+ * Longest chunked answer a panel assembles, in characters of its JSON text. A declared size above it is
+ * refused at the first chunk, before anything is kept.
+ *
+ * @example
+ * MAX_ASSEMBLED_CHARS; // 256000000
+ * @since 1.0.0
+ */
+export const MAX_ASSEMBLED_CHARS = 256_000_000;
+
+/**
+ * Most chunked answers a panel assembles at the same time. The oldest is given up when another starts.
+ *
+ * @example
+ * MAX_OPEN_CHUNK_SETS; // 4
+ * @since 1.0.0
+ */
+export const MAX_OPEN_CHUNK_SETS = 4;
+
+/**
+ * How long a panel waits for the next chunk of an incomplete answer, in milliseconds. Each accepted
+ * chunk restarts the wait; when it runs out, the request is answered with an error.
+ *
+ * @example
+ * CHUNK_TIMEOUT_MS; // 30000
+ * @since 1.0.0
+ */
+export const CHUNK_TIMEOUT_MS = 30_000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -91,8 +187,9 @@ function isEnvelope(value: unknown, from: "agent" | "panel"): value is Record<st
 
 /**
  * True for a well-formed message sent by an agent. Anything else on the channel is ignored. The check
- * covers the envelope (`channel`, `from`, `v`, `type`) and the fields each message type needs. It does
- * not validate every event inside an `events` message.
+ * covers the envelope (`channel`, `from`, `v`, `type`) and the fields each message type needs, including
+ * the bounds of a `chunk` (piece number below the count, count up to {@link MAX_CHUNKS}, text up to
+ * {@link CHUNK_CHARS}). It does not validate every event inside an `events` message.
  *
  * @param value A received message.
  * @returns True when `value` is an {@link AgentMessage}.
@@ -111,6 +208,25 @@ export function isAgentMessage(value: unknown): value is AgentMessage {
       return Array.isArray(value["events"]);
     case "response":
       return typeof value["id"] === "number" && isRecord(value["response"]);
+    case "chunk": {
+      const { id, part, parts, size, data } = value;
+      return (
+        typeof id === "number" &&
+        typeof part === "number" &&
+        typeof parts === "number" &&
+        typeof size === "number" &&
+        typeof data === "string" &&
+        Number.isInteger(part) &&
+        Number.isInteger(parts) &&
+        Number.isInteger(size) &&
+        parts >= 1 &&
+        parts <= MAX_CHUNKS &&
+        part >= 0 &&
+        part < parts &&
+        size >= 0 &&
+        data.length <= CHUNK_CHARS
+      );
+    }
     default:
       return false;
   }
@@ -411,6 +527,93 @@ export interface ServeOptions extends PageHooks {
    * @default 2000
    */
   batch?: number;
+  /**
+   * The id this served agent puts on every message it sends (see {@link AgentMessage}). Leave it unset:
+   * a random id is made for each call. Tests set it to get a known value.
+   */
+  instance?: string;
+  /**
+   * Longest piece of a chunked answer, in characters. Values above {@link CHUNK_CHARS} are lowered to
+   * it, because the panel and the bridge refuse larger pieces.
+   *
+   * @default CHUNK_CHARS
+   */
+  chunkChars?: number;
+  /**
+   * Longest answer sent as one message, in characters of its JSON text. A longer one is sent as chunks.
+   *
+   * @default SINGLE_RESPONSE_CHARS
+   */
+  singleResponseChars?: number;
+}
+
+/**
+ * A random id for one served agent. `crypto.randomUUID` needs a secure context, so a page on plain
+ * http falls back to `getRandomValues`, and then to a time-and-`Math.random` mix: the id only has to
+ * differ between two agent starts, it is not a secret.
+ */
+function newInstanceId(): string {
+  const webCrypto: Crypto | undefined = (globalThis as { crypto?: Crypto }).crypto;
+  if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
+  if (typeof webCrypto?.getRandomValues === "function") {
+    const bytes = webCrypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Longest instance id the panel keeps: an id from the page is untrusted data. */
+const MAX_INSTANCE_CHARS = 128;
+
+/** The instance id a message carries, or `undefined` when it has none or the value is not a usable id. */
+function instanceOf(message: AgentMessage): string | undefined {
+  const id: unknown = message.instance;
+  return typeof id === "string" && id.length > 0 && id.length <= MAX_INSTANCE_CHARS
+    ? id
+    : undefined;
+}
+
+/** Longest error text the panel keeps from an answer: the text is untrusted data. */
+const MAX_ERROR_CHARS = 500;
+
+/**
+ * Cuts an answer into pieces when its JSON text is longer than `singleChars`. Returns `undefined` for an answer that
+ * goes in one message, a string (the reason) when it cannot be serialized, and the pieces otherwise. A cut never
+ * falls between the two halves of a surrogate pair, so every piece is well-formed text.
+ */
+function splitAnswer(
+  response: AgentResponse,
+  pieceChars: number,
+  singleChars: number,
+): undefined | string | { texts: string[]; size: number } {
+  let text: string;
+  try {
+    text = JSON.stringify(response);
+  } catch (error) {
+    // A cycle or a BigInt: the panel gets the reason instead of a message the transport would throw on.
+    return `The page's answer could not be serialized: ${errorText(error)}`.slice(
+      0,
+      MAX_ERROR_CHARS,
+    );
+  }
+  if (text.length <= singleChars) return undefined;
+  if (text.length > MAX_ASSEMBLED_CHARS || Math.ceil(text.length / pieceChars) > MAX_CHUNKS) {
+    return "The page's answer is larger than the panel accepts.";
+  }
+  const texts: string[] = [];
+  for (let start = 0; start < text.length; ) {
+    let end = Math.min(text.length, start + pieceChars);
+    const last = text.charCodeAt(end - 1);
+    // Keep a pair together unless the piece is one unit long (then there is no room to move the cut).
+    if (end < text.length && last >= 0xd800 && last <= 0xdbff && end - start > 1) end -= 1;
+    texts.push(text.slice(start, end));
+    start = end;
+  }
+  return { texts, size: text.length };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -436,7 +639,52 @@ export function serveAgent(
   options: ServeOptions = {},
 ): () => void {
   const limit = options.batch ?? 2000;
-  const send = (message: AgentMessage): void => transport.send(message);
+  const instance = options.instance ?? newInstanceId();
+  const pieceChars = Math.max(
+    1,
+    Math.min(Math.floor(options.chunkChars ?? CHUNK_CHARS), CHUNK_CHARS),
+  );
+  const singleChars = options.singleResponseChars ?? SINGLE_RESPONSE_CHARS;
+  const send = (message: AgentMessage): void => transport.send({ ...message, instance });
+  const answer = (id: number, response: AgentResponse): void => {
+    const pieces = splitAnswer(response, pieceChars, singleChars);
+    if (pieces === undefined) {
+      send({
+        channel: CHANNEL,
+        v: PROTOCOL_VERSION,
+        from: "agent",
+        type: "response",
+        id,
+        response,
+      });
+      return;
+    }
+    if (typeof pieces === "string") {
+      // Reported to the panel, which shows it, instead of thrown into the transport.
+      send({
+        channel: CHANNEL,
+        v: PROTOCOL_VERSION,
+        from: "agent",
+        type: "response",
+        id,
+        response: { ok: false, error: pieces },
+      });
+      return;
+    }
+    for (let part = 0; part < pieces.texts.length; part += 1) {
+      send({
+        channel: CHANNEL,
+        v: PROTOCOL_VERSION,
+        from: "agent",
+        type: "chunk",
+        id,
+        part,
+        parts: pieces.texts.length,
+        size: pieces.size,
+        data: pieces.texts[part] ?? "",
+      });
+    }
+  };
   const stopListening = transport.listen((raw) => {
     if (!isPanelMessage(raw)) return;
     if (raw.type === "hello") {
@@ -451,14 +699,7 @@ export function serveAgent(
     } else {
       response = agent.handle(request);
     }
-    send({
-      channel: CHANNEL,
-      v: PROTOCOL_VERSION,
-      from: "agent",
-      type: "response",
-      id: raw.id,
-      response,
-    });
+    answer(raw.id, response);
   });
   const stopStreaming = agent.subscribe((events) => {
     for (let i = 0; i < events.length; i += limit) {
@@ -477,6 +718,45 @@ export function serveAgent(
   };
 }
 
+/** A chunked answer being assembled by {@link connectRemote}. */
+interface ChunkSet {
+  /** The instance of the first piece: later pieces must come from the same agent. */
+  readonly instance: string | undefined;
+  readonly parts: number;
+  /** The declared length of the whole text. */
+  readonly size: number;
+  readonly pieces: Array<string | undefined>;
+  received: number;
+  chars: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** Reads the JSON text of a chunked answer; what is not an answer becomes an error answer. */
+function parseAnswer(text: string): AgentResponse {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `The page's answer could not be read: ${errorText(error)}`.slice(0, MAX_ERROR_CHARS),
+    };
+  }
+  if (isRecord(value) && !Array.isArray(value)) {
+    if (value["ok"] === true) return { ok: true, result: value["result"] };
+    if (value["ok"] === false && typeof value["error"] === "string") {
+      return { ok: false, error: value["error"].slice(0, MAX_ERROR_CHARS) };
+    }
+  }
+  return { ok: false, error: "The page's answer could not be read." };
+}
+
+/**
+ * Most events {@link connectRemote} holds while it waits for the first complete state. The newest are
+ * kept: the state names its own `seq`, and an event older than it is skipped anyway.
+ */
+const MAX_BUFFERED_EVENTS = 50_000;
+
 /**
  * Options of {@link connectRemote}.
  *
@@ -488,6 +768,12 @@ export interface RemoteOptions {
    * their defaults.
    */
   limits?: Partial<ModelLimits>;
+  /**
+   * How long to wait for the next piece of a chunked answer before giving the request up, in milliseconds.
+   *
+   * @default CHUNK_TIMEOUT_MS
+   */
+  chunkTimeoutMs?: number;
 }
 
 /**
@@ -495,6 +781,11 @@ export interface RemoteOptions {
  * to a local model. Events that arrive before the state are buffered, and the ones the state already
  * contains are skipped (sequence numbers), so no event is lost or applied twice. Disposing the backend
  * closes the transport.
+ *
+ * When the agent cannot give its state (an answer the bridge refused as too large, or a state the panel
+ * cannot read), `ready` stays pending and `backend.error()` returns the reason after a change notification,
+ * so a panel can show it instead of waiting. A message from another agent instance (a reloaded page)
+ * discards the state and asks for a new one.
  *
  * @param transport The channel to the agent.
  * @param options Model limits.
@@ -510,13 +801,22 @@ export function connectRemote(transport: Transport, options: RemoteOptions = {})
   const listeners = new Set<() => void>();
   const waiting = new Map<
     number,
-    { resolve: (response: AgentResponse) => void; reject: (error: Error) => void }
+    {
+      resolve: (response: AgentResponse) => void;
+      reject: (error: Error) => void;
+    }
   >();
+  // Chunked answers being assembled, by request id. At most MAX_OPEN_CHUNK_SETS, each with a timer.
+  const sets = new Map<number, ChunkSet>();
+  const chunkTimeout = options.chunkTimeoutMs ?? CHUNK_TIMEOUT_MS;
   let buffered: WireEvent[] = [];
   let synced = false;
   let nextRequest = 1;
   let disposed = false;
   let notifyScheduled = false;
+  // The id of the agent whose messages the panel has been following (see `AgentMessage.instance`).
+  let instance: string | undefined;
+  let failure: string | undefined;
   let resolveReady: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => {
     resolveReady = resolve;
@@ -534,8 +834,83 @@ export function connectRemote(transport: Transport, options: RemoteOptions = {})
 
   const send = (message: PanelMessage): void => transport.send(message);
 
+  const dropSet = (id: number): void => {
+    const set = sets.get(id);
+    if (set === undefined) return;
+    clearTimeout(set.timer);
+    sets.delete(id);
+  };
+  const dropAllSets = (): void => {
+    for (const id of [...sets.keys()]) dropSet(id);
+  };
+  /** Answers request `id` with `response` and forgets its pieces. */
+  const settle = (id: number, response: AgentResponse): void => {
+    dropSet(id);
+    const entry = waiting.get(id);
+    if (entry === undefined) return;
+    waiting.delete(id);
+    entry.resolve(response);
+  };
+  const giveUp = (id: number, error: string): void => settle(id, { ok: false, error });
+  const armTimer = (id: number): ReturnType<typeof setTimeout> =>
+    setTimeout(() => giveUp(id, "The page's answer did not arrive in full."), chunkTimeout);
+
+  /** Takes one chunk of a chunked answer; joins the answer when the last piece is in. */
+  const takeChunk = (
+    raw: Extract<AgentMessage, { type: "chunk" }>,
+    from: string | undefined,
+  ): void => {
+    let set = sets.get(raw.id);
+    if (set === undefined) {
+      if (raw.size > MAX_ASSEMBLED_CHARS) {
+        giveUp(raw.id, "The page's answer is larger than the panel accepts.");
+        return;
+      }
+      if (sets.size >= MAX_OPEN_CHUNK_SETS) {
+        const oldest = sets.keys().next();
+        if (oldest.done !== true) {
+          giveUp(
+            oldest.value,
+            "The page's answer was given up on: too many answers were arriving at once.",
+          );
+        }
+      }
+      set = {
+        instance: from,
+        parts: raw.parts,
+        size: raw.size,
+        pieces: new Array<string | undefined>(raw.parts).fill(undefined),
+        received: 0,
+        chars: 0,
+        timer: armTimer(raw.id),
+      };
+      sets.set(raw.id, set);
+    } else if (set.instance !== from || set.parts !== raw.parts || set.size !== raw.size) {
+      // Pieces of another agent, or of another cut of the answer, do not belong to this set.
+      return;
+    }
+    if (set.pieces[raw.part] !== undefined) return;
+    set.pieces[raw.part] = raw.data;
+    set.received += 1;
+    set.chars += raw.data.length;
+    if (set.chars > set.size) {
+      giveUp(raw.id, "The pieces of the page's answer did not match its declared size.");
+      return;
+    }
+    clearTimeout(set.timer);
+    set.timer = armTimer(raw.id);
+    if (set.received < set.parts) return;
+    const text = set.pieces.join("");
+    if (text.length !== set.size) {
+      giveUp(raw.id, "The pieces of the page's answer did not match its declared size.");
+      return;
+    }
+    settle(raw.id, parseAnswer(text));
+  };
+
   const applyState = (state: ModelState): void => {
     model.importState(state);
+    failure = undefined;
     synced = true;
     const pending = buffered;
     buffered = [];
@@ -564,27 +939,77 @@ export function connectRemote(transport: Transport, options: RemoteOptions = {})
   const stop = transport.listen((raw) => {
     if (!isAgentMessage(raw)) return;
     if (raw.v !== PROTOCOL_VERSION) return;
+    const id = instanceOf(raw);
+    if (raw.type === "chunk") {
+      // A piece is only for a request this panel made, and only from the agent it follows. Anything else is
+      // dropped before it can start a set or a timer. A piece of the agent that was replaced by a reload
+      // must not make the panel switch back to it, which a whole message from a new agent does by design:
+      // a new agent introduces itself with `hello`, events or an answer first.
+      if (!waiting.has(raw.id)) return;
+      if (instance !== undefined && id !== instance) return;
+    }
+    if (id !== undefined) {
+      if (instance !== undefined && id !== instance) {
+        // Another agent answers on the same channel: the page was reloaded. Its sequence numbers need not
+        // start below the old ones (it may have recorded a lot before the panel noticed), so the id, not
+        // the counter, tells the old state is stale.
+        instance = id;
+        synced = false;
+        buffered = [];
+        // Pieces of the old agent's answers can no longer complete anything.
+        dropAllSets();
+        sync();
+      } else {
+        instance = id;
+      }
+    }
     if (raw.type === "events") {
+      // The page is not trusted by the tools that inspect it: an element that is not an event is skipped
+      // here, so the model never reads a missing field and a `NaN` never reaches its sequence counter.
+      const valid = raw.events.filter(isWireEvent);
+      const first = valid[0];
+      if (synced && first !== undefined && first.seq <= model.lastSeq) {
+        // The agent's counter only grows, so a batch that starts at or below the last applied number is
+        // from another agent: the inspected page was reloaded and its new agent counts from 1 again.
+        // Ignoring it would keep the old page on screen, so the panel asks for the new state.
+        synced = false;
+        buffered = [];
+        sync();
+      }
       if (!synced) {
-        buffered.push(...raw.events);
+        // Bounded: a page whose state never arrives (a refused or oversized answer) must not fill the panel.
+        for (const event of valid) buffered.push(event);
+        if (buffered.length > MAX_BUFFERED_EVENTS) {
+          buffered.splice(0, buffered.length - MAX_BUFFERED_EVENTS);
+        }
         return;
       }
-      for (const event of raw.events) model.apply(event);
+      for (const event of valid) model.apply(event);
       notify();
       return;
     }
+    if (raw.type === "chunk") {
+      takeChunk(raw, id);
+      return;
+    }
     if (raw.type === "response") {
-      const entry = waiting.get(raw.id);
-      if (entry === undefined) return;
-      waiting.delete(raw.id);
-      entry.resolve(raw.response);
+      // A whole answer (or the bridge's refusal) ends any pieces collected for the same request.
+      settle(raw.id, raw.response);
     }
   });
 
   const sync = (): void => {
     void request({ type: "snapshot" }).then(
       (response) => {
-        if (response.ok) applyState(response.result as ModelState);
+        if (response.ok && isModelState(response.result)) {
+          applyState(response.result);
+          return;
+        }
+        // Without this the panel would say "connecting" for good: tell it why there is no state.
+        failure = response.ok
+          ? "The page sent a state the panel cannot read."
+          : String(response.error).slice(0, MAX_ERROR_CHARS);
+        notify();
       },
       () => {
         // The only rejection is dispose(): there is nothing left to synchronize.
@@ -599,6 +1024,7 @@ export function connectRemote(transport: Transport, options: RemoteOptions = {})
   return {
     model,
     ready,
+    error: () => failure,
     subscribe(listener): () => void {
       listeners.add(listener);
       return () => {
@@ -621,6 +1047,7 @@ export function connectRemote(transport: Transport, options: RemoteOptions = {})
     dispose(): void {
       disposed = true;
       stop();
+      dropAllSets();
       listeners.clear();
       for (const entry of waiting.values())
         entry.reject(new Error("The devtools backend was disposed."));

@@ -85,7 +85,9 @@ export function installHook(options: InstallHookOptions = {}): InstalledHook | u
     return isHook(existing) && existing.version === PROTOCOL_VERSION ? existing : undefined;
   }
   const limit = options.buffer ?? 5000;
-  const sinks: HookSink[] = [];
+  // Replaced, never changed in place: a sink that detaches while an event is delivered must not make
+  // the loop skip the sink after it.
+  let sinks: readonly HookSink[] = [];
   const registry = new Map<string, InspectionSource>();
   let buffer: Buffered[] | null = [];
   let faults = 0;
@@ -125,8 +127,9 @@ export function installHook(options: InstallHookOptions = {}): InstalledHook | u
         if (buffer !== null && buffer.length < limit) buffer.push([kind, a, b, c, d, e]);
         return;
       }
-      for (let i = 0; i < sinks.length; i += 1) {
-        const sink = sinks[i];
+      const current = sinks;
+      for (let i = 0; i < current.length; i += 1) {
+        const sink = current[i];
         if (sink !== undefined) deliver(sink, kind, a, b, c, d, e);
       }
     },
@@ -139,7 +142,7 @@ export function installHook(options: InstallHookOptions = {}): InstalledHook | u
       return [...registry].map(([name, source]) => ({ name, source }));
     },
     attach(sink): () => void {
-      sinks.push(sink);
+      sinks = [...sinks, sink];
       if (buffer !== null) {
         const replay = buffer;
         buffer = null;
@@ -148,7 +151,7 @@ export function installHook(options: InstallHookOptions = {}): InstalledHook | u
       }
       return () => {
         const index = sinks.indexOf(sink);
-        if (index !== -1) sinks.splice(index, 1);
+        if (index !== -1) sinks = [...sinks.slice(0, index), ...sinks.slice(index + 1)];
       };
     },
   };

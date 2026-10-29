@@ -151,8 +151,8 @@ export function listZip(archive) {
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { buildExtensions } = await import("./build.mjs");
-  const version = process.env["SHADOWJS_EXTENSION_VERSION"] ?? "1.0.0";
+  const { buildExtensions, extensionVersion } = await import("./build.mjs");
+  const version = extensionVersion();
   const folders = await buildExtensions({ version });
   for (const target of /** @type {const} */ (["chromium", "firefox"])) {
     const out = join(here, "store", `shadowjs-devtools-${target}-${version}.zip`);

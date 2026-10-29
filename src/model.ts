@@ -478,10 +478,7 @@ export class InspectorModel {
       }
       next.observers = null;
       this.graveyard.set(next.id, next);
-      if (this.graveyard.size > this.limits.graveyard) {
-        const oldest = this.graveyard.keys().next();
-        if (oldest.done !== true) this.graveyard.delete(oldest.value);
-      }
+      this.trimGraveyard();
       this.componentCache.delete(next.id);
       const owned = this.leaves.get(next.id);
       if (owned !== undefined) {
@@ -492,6 +489,16 @@ export class InspectorModel {
         }
       }
       this.onBury?.(next);
+    }
+  }
+
+  /** Drops the oldest disposed nodes until the graveyard holds at most `limits.graveyard`. */
+  private trimGraveyard(): void {
+    // A loop, not one deletion: a state imported from a larger model starts above the limit.
+    while (this.graveyard.size > this.limits.graveyard) {
+      const oldest = this.graveyard.keys().next();
+      if (oldest.done === true) return;
+      this.graveyard.delete(oldest.value);
     }
   }
 
@@ -811,6 +818,7 @@ export class InspectorModel {
       }
     }
     for (const plain of state.graveyard) this.graveyard.set(plain.id, revive(plain));
+    this.trimGraveyard();
     for (const run of state.runs) this.runs.push(run);
     for (const write of state.writes) this.writes.push(write);
     for (const flush of state.flushes) {

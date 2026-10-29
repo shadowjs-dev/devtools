@@ -161,10 +161,25 @@ export async function buildExtension(options) {
   return (await buildExtensions(options)).chromium;
 }
 
+/**
+ * The version the extension is built with: `SHADOWJS_EXTENSION_VERSION` when it is set, else the
+ * `version` of the package. Reading it from `package.json` keeps the extension and the package on one
+ * number; a hard-coded default fell behind at every release.
+ *
+ * @param {Record<string, string | undefined>} [env] The environment to read (default `process.env`).
+ * @returns {string} The `x.y.z` version.
+ * @since 1.0.1
+ */
+export function extensionVersion(env = process.env) {
+  const fromEnv = env["SHADOWJS_EXTENSION_VERSION"];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  const pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+  return pkg.version;
+}
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-  const version = process.env["SHADOWJS_EXTENSION_VERSION"] ?? "1.0.0";
-  const out = await buildExtensions({ version });
+  const out = await buildExtensions({ version: extensionVersion() });
   for (const folder of Object.values(out)) {
     if (!existsSync(join(folder, "manifest.json")))
       throw new Error(`build: ${folder}/manifest.json was not written`);

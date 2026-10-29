@@ -66,3 +66,13 @@ export function buildExtensions(
  * @since 1.0.0
  */
 export function buildExtension(options: BuildOptions): Promise<string>;
+
+/**
+ * The version the extension is built with: `SHADOWJS_EXTENSION_VERSION` when it is set, else the
+ * `version` of the package.
+ *
+ * @param env The environment to read (default `process.env`).
+ * @returns The `x.y.z` version.
+ * @since 1.0.1
+ */
+export function extensionVersion(env?: Record<string, string | undefined>): string;

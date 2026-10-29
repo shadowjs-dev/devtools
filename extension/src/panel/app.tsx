@@ -87,6 +87,8 @@ function tabKeyAction(key: string): PanelAction | undefined {
 export const PanelApp: Component<PanelAppProps> = (props) => {
   const [view, setView] = useSignal<PanelViewState>(initialPanelState());
   const [connected, setConnected] = useSignal(false);
+  // Why the first state could not be loaded (for example the page's state is over the bridge's size cap).
+  const [failure, setFailure] = useSignal<string | undefined>(undefined);
   const state = createPanelState(props.backend);
   const inspections = createInspectionState(props.backend);
   const dispatch = (action: PanelAction): void => {
@@ -96,6 +98,7 @@ export const PanelApp: Component<PanelAppProps> = (props) => {
   // The model's changes are shown once per frame, as the overlay shows them: a burst is one redraw.
   let refreshPending = false;
   const stopModel = props.backend.subscribe(() => {
+    setFailure(props.backend.error?.());
     if (refreshPending) return;
     refreshPending = true;
     requestAnimationFrame(() => {
@@ -123,6 +126,7 @@ export const PanelApp: Component<PanelAppProps> = (props) => {
   });
   void props.backend.ready.then(() => {
     setConnected(true);
+    setFailure(undefined);
     void inspections.refresh();
   });
 
@@ -209,7 +213,13 @@ export const PanelApp: Component<PanelAppProps> = (props) => {
           {view().theme === "dark" ? "Light theme" : "Dark theme"}
         </button>
         <span class="status" role="status" aria-live="polite">
-          {connected() ? (view().paused ? "Connected, paused" : "Connected") : "Connecting…"}
+          {connected()
+            ? view().paused
+              ? "Connected, paused"
+              : "Connected"
+            : failure() === undefined
+              ? "Connecting…"
+              : `Could not load the page: ${failure()}`}
         </span>
       </header>
       <div id="tabpanel" class="view" role="tabpanel" aria-labelledby={`tab-${view().tab}`}>

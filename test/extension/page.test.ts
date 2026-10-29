@@ -46,7 +46,13 @@ describe("[DVT-EXT-PG] the page hook installs the hook and answers the panel ove
     });
     expect(win.posts).toEqual([
       {
-        message: { channel: CHANNEL, v: PROTOCOL_VERSION, from: "agent", type: "hello" },
+        message: {
+          channel: CHANNEL,
+          v: PROTOCOL_VERSION,
+          from: "agent",
+          type: "hello",
+          instance: expect.any(String),
+        },
         origin: "http://localhost:5173",
       },
     ]);

@@ -1,5 +1,6 @@
 import { readInspections } from "./inspection";
 import { type GraphSnapshot, snapshotOf } from "./inspector";
+import { describeElement } from "./internal/describe-element";
 import { InspectorModel, type ModelLimits, type ModelState, type NodeRecord } from "./model";
 import { errorMessage, parseEditableText, preview, toEditableText } from "./preview";
 import {
@@ -229,10 +230,8 @@ function toNumber(value: unknown): number {
 function describeSide(value: unknown): string {
   if (typeof value === "string") return value.length > 200 ? `${value.slice(0, 199)}…` : value;
   if (typeof Node !== "undefined" && value instanceof Node) {
-    if (value instanceof Element) {
-      const html = value.outerHTML;
-      return html.length > 200 ? `${html.slice(0, 199)}…` : html;
-    }
+    // Built from the first nodes only: `outerHTML` would serialize the whole subtree to keep 200 characters.
+    if (value instanceof Element) return describeElement(value, 200);
     return `#${value.nodeName}`;
   }
   return preview(value, 200);
@@ -304,7 +303,17 @@ export function createAgent(options: AgentOptions = {}): Agent {
     if (pending.length === 0) return;
     const batch = pending;
     pending = [];
-    for (const listener of listeners) listener(batch);
+    // Every subscriber gets the batch, even when an earlier one throws (a closed port, a view that
+    // failed): the first error is rethrown afterward, so it is still reported.
+    let failure: { error: unknown } | undefined;
+    for (const listener of [...listeners]) {
+      try {
+        listener(batch);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+    if (failure !== undefined) throw failure.error;
   };
 
   /** Stamps, records and fans out one event. */
