@@ -1,6 +1,6 @@
 {
   "name": "@shadow-js/devtools",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A development panel that shows the components, signals, effects and updates of a running app",
   "license": "MIT",
   "type": "module",
@@ -39,14 +39,14 @@
     "check": "npm run lint && npm run typecheck && npm run build && npm test && npm run test:perf && npm run test:gc"
   },
   "peerDependencies": {
-    "@shadow-js/core": "^1.0.3",
-    "@shadow-js/web": "^1.0.3"
+    "@shadow-js/core": "^1.0.4",
+    "@shadow-js/web": "^1.0.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
-    "@shadow-js/compiler": "^1.0.3",
-    "@shadow-js/core": "^1.0.3",
-    "@shadow-js/web": "^1.0.3",
+    "@shadow-js/compiler": "^1.0.4",
+    "@shadow-js/core": "^1.0.4",
+    "@shadow-js/web": "^1.0.4",
     "@types/node": "^24.0.0",
     "happy-dom": "^21.0.3",
     "rolldown": "1.2.13",

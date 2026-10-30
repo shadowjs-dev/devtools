@@ -24,8 +24,6 @@ npm install -D @shadow-js/devtools
 Install it as a development dependency. The package has no runtime dependencies. It declares
 `@shadow-js/core` and `@shadow-js/web` as peer dependencies, which your app already uses.
 
-ShadowJS 1.0.0 is not on npm yet. Until it is published, install the packages from this repository's workspace.
-
 ## Quick start
 
 ```tsx
@@ -557,7 +555,7 @@ devtools attribute an update to a component.
 ## Dependencies
 
 - Runtime: none.
-- Peers: `@shadow-js/core` and `@shadow-js/web` `^1.0.0`: the runtime the inspector reads and hooks into.
+- Peers: `@shadow-js/core` and `@shadow-js/web` `^1.0.3`: the runtime the inspector reads and hooks into.
 
 ## Types
 
