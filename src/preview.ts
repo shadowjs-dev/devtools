@@ -13,14 +13,31 @@
  * @since 1.0.0
  */
 export function preview(value: unknown, limit = 80): string {
-  const text = describe(value);
+  const text = describeSafely(value, limit);
   return text.length > limit ? `${text.slice(0, Math.max(limit - 1, 1))}…` : text;
 }
 
-function describe(value: unknown): string {
+/**
+ * The text of a value, or `(unreadable)` when reading it throws (a revoked proxy, a getter that fails): the
+ * tools describe values from inside the application's own calls, and must not throw into them.
+ */
+const UNREADABLE = "(unreadable)";
+
+function describeSafely(value: unknown, limit: number): string {
+  try {
+    return describe(value, limit);
+  } catch {
+    // Reported in the preview itself, which is where a person looks; the application's call goes on.
+    return UNREADABLE;
+  }
+}
+
+function describe(value: unknown, limit: number): string {
   switch (typeof value) {
     case "string":
-      return JSON.stringify(value);
+      // Cut before quoting: a signal that holds a 50 MB string is previewed on every write, and the
+      // result is cut to `limit` anyway (the quotes and escapes only make the text longer).
+      return JSON.stringify(value.length > limit ? value.slice(0, limit) : value);
     case "number":
     case "boolean":
     case "undefined":
@@ -40,7 +57,10 @@ function describe(value: unknown): string {
   if (value instanceof Set) return `Set(${value.size})`;
   if (value instanceof Date)
     return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
-  if (value instanceof Error) return `${value.name}: ${value.message}`;
+  if (value instanceof Error) {
+    // `String()`: a thrown error may carry a `name` or `message` that is not a string.
+    return `${String(value.name).slice(0, limit)}: ${String(value.message).slice(0, limit)}`;
+  }
   if (typeof Node !== "undefined" && value instanceof Node) {
     return value instanceof Element ? `<${value.localName}>` : `#${value.nodeName}`;
   }
@@ -70,8 +90,7 @@ function describe(value: unknown): string {
  * @since 1.0.0
  */
 export function errorMessage(error: unknown, limit = 300): string {
-  const text = error instanceof Error ? `${error.name}: ${error.message}` : preview(error, limit);
-  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+  return preview(error, limit);
 }
 
 /**

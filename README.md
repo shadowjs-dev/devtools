@@ -555,7 +555,7 @@ devtools attribute an update to a component.
 ## Dependencies
 
 - Runtime: none.
-- Peers: `@shadow-js/core` and `@shadow-js/web` `^1.0.3`: the runtime the inspector reads and hooks into.
+- Peers: `@shadow-js/core` and `@shadow-js/web` `^1.0.5`: the runtime the inspector reads and hooks into.
 
 ## Types
 

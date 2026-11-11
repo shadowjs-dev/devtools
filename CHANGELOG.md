@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- A preview cuts a very long string before quoting it and never throws into the application (a revoked proxy shows as `(unreadable)`).
+
 ## 1.0.4
 
 ### Changed
