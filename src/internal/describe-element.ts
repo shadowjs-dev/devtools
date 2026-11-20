@@ -11,6 +11,8 @@
  * @param root The element to describe.
  * @param limit The most characters the result may have; a longer markup ends with `…` at this length.
  * @returns The markup, or its first `limit - 1` characters and `…`.
+ * @since 1.0.0
+ * @internal
  */
 export function describeElement(root: Element, limit: number): string {
   let out = "";

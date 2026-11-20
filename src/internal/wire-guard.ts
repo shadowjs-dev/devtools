@@ -48,6 +48,7 @@ function areNumbersAt(value: Record<string, unknown>, keys: readonly string[]): 
  * @param value One element of an `events` message.
  * @returns True when the model can apply it without reading a missing field.
  * @since 1.0.0
+ * @internal
  */
 export function isWireEvent(value: unknown): value is WireEvent {
   if (!isRecord(value) || !isNumber(value["seq"]) || !isNumber(value["t"])) return false;
@@ -188,6 +189,7 @@ function every(value: unknown, check: (entry: unknown) => boolean): boolean {
  * @param value The `result` of an ok `snapshot` response.
  * @returns True when {@link InspectorModel.importState} can load it.
  * @since 1.0.0
+ * @internal
  */
 export function isModelState(value: unknown): value is ModelState {
   return (

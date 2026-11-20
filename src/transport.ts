@@ -120,6 +120,7 @@ export interface Transport {
  * @example
  * CHUNK_CHARS; // 400000
  * @since 1.0.0
+ * @internal
  */
 export const CHUNK_CHARS = 400_000;
 
@@ -130,6 +131,7 @@ export const CHUNK_CHARS = 400_000;
  * @example
  * SINGLE_RESPONSE_CHARS; // 15000000
  * @since 1.0.0
+ * @internal
  */
 export const SINGLE_RESPONSE_CHARS = 15_000_000;
 
@@ -139,6 +141,7 @@ export const SINGLE_RESPONSE_CHARS = 15_000_000;
  * @example
  * MAX_CHUNKS; // 1024
  * @since 1.0.0
+ * @internal
  */
 export const MAX_CHUNKS = 1024;
 
@@ -149,6 +152,7 @@ export const MAX_CHUNKS = 1024;
  * @example
  * MAX_ASSEMBLED_CHARS; // 256000000
  * @since 1.0.0
+ * @internal
  */
 export const MAX_ASSEMBLED_CHARS = 256_000_000;
 
@@ -158,6 +162,7 @@ export const MAX_ASSEMBLED_CHARS = 256_000_000;
  * @example
  * MAX_OPEN_CHUNK_SETS; // 4
  * @since 1.0.0
+ * @internal
  */
 export const MAX_OPEN_CHUNK_SETS = 4;
 
@@ -168,6 +173,7 @@ export const MAX_OPEN_CHUNK_SETS = 4;
  * @example
  * CHUNK_TIMEOUT_MS; // 30000
  * @since 1.0.0
+ * @internal
  */
 export const CHUNK_TIMEOUT_MS = 30_000;
 
